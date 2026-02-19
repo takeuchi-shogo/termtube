@@ -3,6 +3,7 @@ package app
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/takeuchishougo/termtube/internal/player"
 	"github.com/takeuchishougo/termtube/internal/ui"
 )
 
@@ -20,12 +21,17 @@ type Model struct {
 	width       int
 	height      int
 	search      ui.SearchModel
+	player      ui.PlayerModel
+	mpv         *player.MpvPlayer
 }
 
 func New() Model {
+	mpv := player.NewMpvPlayer()
 	return Model{
 		currentView: ViewSearch,
 		search:      ui.NewSearchModel(),
+		player:      ui.NewPlayerModel(mpv),
+		mpv:         mpv,
 	}
 }
 
@@ -39,13 +45,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// Pass window size to search model (reserve space for tab bar)
-		searchMsg := tea.WindowSizeMsg{
+		contentMsg := tea.WindowSizeMsg{
 			Width:  msg.Width,
 			Height: msg.Height - 1, // 1 line for tab bar
 		}
+		var cmds []tea.Cmd
 		var cmd tea.Cmd
-		m.search, cmd = m.search.Update(searchMsg)
-		return m, cmd
+		m.search, cmd = m.search.Update(contentMsg)
+		cmds = append(cmds, cmd)
+		m.player, cmd = m.player.Update(contentMsg)
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
 
 	case ui.SearchResultMsg:
 		if m.currentView == ViewSearch {
@@ -54,10 +64,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case ui.PlayVideoMsg:
+		// Received playback request: start playing and switch to player view
+		m.currentView = ViewPlayer
+		cmd := m.player.PlayVideo(msg.Video)
+		return m, cmd
+
+	case ui.PlayerStateMsg:
+		// Forward player state updates to player model
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
+		return m, cmd
+
 	case tea.KeyMsg:
 		// When search is in input mode, only handle ctrl+c for quitting
 		if m.currentView == ViewSearch && m.search.IsInputMode() {
 			if msg.String() == "ctrl+c" {
+				m.mpv.Stop()
 				return m, tea.Quit
 			}
 			// Forward all other keys to search model
@@ -69,22 +92,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global key handling (when search is NOT in input mode)
 		switch msg.String() {
 		case "q", "ctrl+c":
+			m.mpv.Stop()
 			return m, tea.Quit
 		case "1":
 			m.currentView = ViewSearch
+			return m, nil
 		case "2":
 			m.currentView = ViewPlayer
+			return m, nil
 		case "3":
 			m.currentView = ViewPlaylist
+			return m, nil
 		case "4":
 			m.currentView = ViewHistory
-		default:
-			// Delegate to current view's model
-			if m.currentView == ViewSearch {
-				var cmd tea.Cmd
-				m.search, cmd = m.search.Update(msg)
-				return m, cmd
+			return m, nil
+		case "enter":
+			// In search list mode, Enter triggers video playback
+			if m.currentView == ViewSearch && !m.search.IsInputMode() {
+				video := m.search.SelectedVideo()
+				if video != nil {
+					return m, func() tea.Msg {
+						return ui.PlayVideoMsg{Video: *video}
+					}
+				}
 			}
+		}
+
+		// Delegate to current view's model
+		switch m.currentView {
+		case ViewSearch:
+			var cmd tea.Cmd
+			m.search, cmd = m.search.Update(msg)
+			return m, cmd
+		case ViewPlayer:
+			var cmd tea.Cmd
+			m.player, cmd = m.player.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -98,7 +141,7 @@ func (m Model) View() string {
 	case ViewSearch:
 		content = m.search.View()
 	case ViewPlayer:
-		content = "再生画面（未実装）"
+		content = m.player.View()
 	case ViewPlaylist:
 		content = "プレイリスト画面（未実装）"
 	case ViewHistory:
