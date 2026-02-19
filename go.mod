@@ -3,6 +3,7 @@ module github.com/takeuchishougo/termtube
 go 1.25.1
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 )
