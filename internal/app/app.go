@@ -10,6 +10,7 @@ import (
 	"github.com/takeuchishougo/termtube/internal/player"
 	"github.com/takeuchishougo/termtube/internal/storage"
 	"github.com/takeuchishougo/termtube/internal/ui"
+	"github.com/takeuchishougo/termtube/internal/youtube"
 )
 
 type View int
@@ -35,9 +36,20 @@ type Model struct {
 	config        storage.Config
 	configPath    string
 	statusMsg     string // temporary status message
+	initialURL    string // CLI から直接再生する URL
 }
 
+// New は通常の TUI モードで Model を生成する。
 func New() Model {
+	return newModel("")
+}
+
+// NewWithURL は指定 URL を即時再生する TUI モードで Model を生成する。
+func NewWithURL(url string) Model {
+	return newModel(url)
+}
+
+func newModel(initialURL string) Model {
 	mpv := player.NewMpvPlayer()
 
 	homeDir, err := os.UserHomeDir()
@@ -56,7 +68,7 @@ func New() Model {
 	// 設定からデフォルトの表示モードを適用
 	playerModel.SetViewMode(ui.ViewModeFromString(cfg.Player.DefaultMode))
 
-	return Model{
+	m := Model{
 		currentView:   ViewSearch,
 		search:        ui.NewSearchModel(),
 		player:        playerModel,
@@ -68,10 +80,32 @@ func New() Model {
 		config:        cfg,
 		configPath:    configPath,
 	}
+
+	if initialURL != "" {
+		m.initialURL = initialURL
+		m.currentView = ViewPlayer
+	}
+
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.search.Init()
+	cmds := []tea.Cmd{m.search.Init()}
+
+	// URL が指定されている場合、即時再生を開始する
+	if m.initialURL != "" {
+		url := m.initialURL
+		cmds = append(cmds, func() tea.Msg {
+			return ui.PlayVideoMsg{
+				Video: youtube.Video{
+					Title: url,
+					URL:   url,
+				},
+			}
+		})
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
