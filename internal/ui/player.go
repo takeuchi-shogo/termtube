@@ -11,6 +11,36 @@ import (
 	"github.com/takeuchishougo/termtube/internal/youtube"
 )
 
+// ViewMode は再生画面の表示モードを表す。
+type ViewMode int
+
+const (
+	// ModeFocus は集中視聴モード: 大きな動画情報表示。
+	ModeFocus ViewMode = iota
+	// ModeBGV は BGV モード: コンパクトなプレイヤー情報（1行表示）。
+	ModeBGV
+)
+
+// ViewModeFromString は文字列から ViewMode を返す。
+func ViewModeFromString(s string) ViewMode {
+	switch s {
+	case "bgv":
+		return ModeBGV
+	default:
+		return ModeFocus
+	}
+}
+
+// String は ViewMode の文字列表現を返す。
+func (v ViewMode) String() string {
+	switch v {
+	case ModeBGV:
+		return "bgv"
+	default:
+		return "focus"
+	}
+}
+
 // PlayerStateMsg wraps player.PlayerState, sent when mpv state changes.
 type PlayerStateMsg struct {
 	State player.PlayerState
@@ -36,6 +66,7 @@ type PlayerModel struct {
 	relatedVideos []youtube.Video
 	showRelated   bool
 	relatedCursor int
+	viewMode      ViewMode
 	width         int
 	height        int
 }
@@ -43,10 +74,21 @@ type PlayerModel struct {
 // NewPlayerModel creates a new PlayerModel with the given MpvPlayer.
 func NewPlayerModel(mpv *player.MpvPlayer) PlayerModel {
 	return PlayerModel{
-		mpv:   mpv,
-		state: mpv.GetState(),
-		chat:  NewChatModel(defaultMaxChatMessages),
+		mpv:      mpv,
+		state:    mpv.GetState(),
+		chat:     NewChatModel(defaultMaxChatMessages),
+		viewMode: ModeFocus,
 	}
+}
+
+// SetViewMode は表示モードを設定する。
+func (m *PlayerModel) SetViewMode(mode ViewMode) {
+	m.viewMode = mode
+}
+
+// GetViewMode は現在の表示モードを返す。
+func (m PlayerModel) GetViewMode() ViewMode {
+	return m.viewMode
 }
 
 // Update handles messages for the player model.
@@ -143,6 +185,14 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 			// Toggle related videos panel
 			m.showRelated = !m.showRelated
 			return m, nil
+		case "b":
+			// Toggle between Focus and BGV mode
+			if m.viewMode == ModeFocus {
+				m.viewMode = ModeBGV
+			} else {
+				m.viewMode = ModeFocus
+			}
+			return m, nil
 		}
 	}
 
@@ -157,6 +207,15 @@ func (m PlayerModel) View() string {
 			Render("再生中の動画はありません")
 	}
 
+	if m.viewMode == ModeBGV {
+		return m.viewBGV()
+	}
+
+	return m.viewFocus()
+}
+
+// viewFocus は集中視聴モードの表示を描画する。
+func (m PlayerModel) viewFocus() string {
 	// Video title
 	title := TitleStyle.Render(m.current.Title)
 
@@ -164,15 +223,7 @@ func (m PlayerModel) View() string {
 	channel := SubtitleStyle.Render(m.current.Channel)
 
 	// State icon + position / duration
-	var stateIcon string
-	switch m.state.State {
-	case player.StatePlaying:
-		stateIcon = "▶"
-	case player.StatePaused:
-		stateIcon = "⏸"
-	case player.StateStopped:
-		stateIcon = "⏹"
-	}
+	stateIcon := m.stateIcon()
 
 	posStr := formatTime(int(m.state.Position))
 	durStr := formatTime(int(m.state.Duration))
@@ -181,8 +232,11 @@ func (m PlayerModel) View() string {
 	// Volume bar
 	volumeBar := renderVolumeBar(m.state.Volume, m.width)
 
+	// Mode indicator
+	modeIndicator := SubtitleStyle.Render("[Focus Mode]")
+
 	// Help text
-	help := HelpStyle.Render("Space: 再生/一時停止 | ←/→: シーク ±5秒 | ↑/↓: 音量 ±5 | c: チャット | Tab: 関連 | 1: 検索に戻る | q: 終了")
+	help := HelpStyle.Render("Space: 再生/一時停止 | ←/→: シーク ±5秒 | ↑/↓: 音量 ±5 | c: チャット | Tab: 関連 | b: BGVモード | 1: 検索に戻る | q: 終了")
 
 	parts := []string{
 		"",
@@ -191,6 +245,7 @@ func (m PlayerModel) View() string {
 		"",
 		playbackInfo,
 		volumeBar,
+		modeIndicator,
 		"",
 	}
 
@@ -209,6 +264,74 @@ func (m PlayerModel) View() string {
 	parts = append(parts, help)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// viewBGV は BGV モードの表示を描画する。
+// コンパクトな1行表示で、TUI のスペースを多く残す。
+func (m PlayerModel) viewBGV() string {
+	stateIcon := m.stateIcon()
+	posStr := formatTime(int(m.state.Position))
+	durStr := formatTime(int(m.state.Duration))
+
+	// タイトルを短縮表示（幅に合わせて切り詰め）
+	titleText := m.current.Title
+	maxTitleLen := m.width - 40
+	if maxTitleLen < 10 {
+		maxTitleLen = 10
+	}
+	titleRunes := []rune(titleText)
+	if len(titleRunes) > maxTitleLen {
+		titleText = string(titleRunes[:maxTitleLen]) + "..."
+	}
+
+	// コンパクトな1行プレイヤー情報
+	compactLine := fmt.Sprintf("%s %s | %s/%s | Vol:%d%%",
+		stateIcon, titleText, posStr, durStr, m.state.Volume)
+
+	compactStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170")).
+		Padding(0, 1)
+
+	modeIndicator := SubtitleStyle.Render("[BGV Mode]")
+
+	// BGV モードのヘルプ（コンパクト）
+	help := HelpStyle.Render("Space: ⏯ | ←/→: シーク | ↑/↓: 音量 | c: チャット | Tab: 関連 | b: Focusモード | 1: 検索 | q: 終了")
+
+	parts := []string{
+		compactStyle.Render(compactLine),
+		modeIndicator,
+	}
+
+	// Chat panel (BGV mode でも表示可能)
+	chatView := m.chat.View()
+	if chatView != "" {
+		parts = append(parts, chatView)
+	}
+
+	// Related videos panel
+	if m.showRelated {
+		relatedView := m.renderRelated()
+		parts = append(parts, relatedView)
+	}
+
+	parts = append(parts, help)
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// stateIcon は現在の再生状態に対応するアイコンを返す。
+func (m PlayerModel) stateIcon() string {
+	switch m.state.State {
+	case player.StatePlaying:
+		return "▶"
+	case player.StatePaused:
+		return "⏸"
+	case player.StateStopped:
+		return "⏹"
+	default:
+		return "?"
+	}
 }
 
 // renderRelated は関連動画パネルを描画する。

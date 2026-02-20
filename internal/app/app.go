@@ -32,6 +32,8 @@ type Model struct {
 	mpv           *player.MpvPlayer
 	historyStore  *storage.HistoryStore
 	playlistStore *storage.PlaylistStore
+	config        storage.Config
+	configPath    string
 	statusMsg     string // temporary status message
 }
 
@@ -43,19 +45,28 @@ func New() Model {
 		homeDir = "."
 	}
 	dataDir := filepath.Join(homeDir, ".local", "share", "termtube")
+	configPath := filepath.Join(dataDir, "config.toml")
+
+	cfg, _ := storage.LoadConfig(configPath)
 
 	historyStore := storage.NewHistoryStore(filepath.Join(dataDir, "history.json"))
 	playlistStore := storage.NewPlaylistStore(filepath.Join(dataDir, "playlists"))
 
+	playerModel := ui.NewPlayerModel(mpv)
+	// 設定からデフォルトの表示モードを適用
+	playerModel.SetViewMode(ui.ViewModeFromString(cfg.Player.DefaultMode))
+
 	return Model{
 		currentView:   ViewSearch,
 		search:        ui.NewSearchModel(),
-		player:        ui.NewPlayerModel(mpv),
+		player:        playerModel,
 		history:       ui.NewHistoryModel(historyStore),
 		playlist:      ui.NewPlaylistModel(playlistStore),
 		mpv:           mpv,
 		historyStore:  historyStore,
 		playlistStore: playlistStore,
+		config:        cfg,
+		configPath:    configPath,
 	}
 }
 
