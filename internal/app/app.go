@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -21,14 +22,17 @@ const (
 )
 
 type Model struct {
-	currentView  View
-	width        int
-	height       int
-	search       ui.SearchModel
-	player       ui.PlayerModel
-	history      ui.HistoryModel
-	mpv          *player.MpvPlayer
-	historyStore *storage.HistoryStore
+	currentView   View
+	width         int
+	height        int
+	search        ui.SearchModel
+	player        ui.PlayerModel
+	history       ui.HistoryModel
+	playlist      ui.PlaylistModel
+	mpv           *player.MpvPlayer
+	historyStore  *storage.HistoryStore
+	playlistStore *storage.PlaylistStore
+	statusMsg     string // temporary status message
 }
 
 func New() Model {
@@ -41,14 +45,17 @@ func New() Model {
 	dataDir := filepath.Join(homeDir, ".local", "share", "termtube")
 
 	historyStore := storage.NewHistoryStore(filepath.Join(dataDir, "history.json"))
+	playlistStore := storage.NewPlaylistStore(filepath.Join(dataDir, "playlists"))
 
 	return Model{
-		currentView:  ViewSearch,
-		search:       ui.NewSearchModel(),
-		player:       ui.NewPlayerModel(mpv),
-		history:      ui.NewHistoryModel(historyStore),
-		mpv:          mpv,
-		historyStore: historyStore,
+		currentView:   ViewSearch,
+		search:        ui.NewSearchModel(),
+		player:        ui.NewPlayerModel(mpv),
+		history:       ui.NewHistoryModel(historyStore),
+		playlist:      ui.NewPlaylistModel(playlistStore),
+		mpv:           mpv,
+		historyStore:  historyStore,
+		playlistStore: playlistStore,
 	}
 }
 
@@ -74,6 +81,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		m.history, cmd = m.history.Update(contentMsg)
 		cmds = append(cmds, cmd)
+		m.playlist, cmd = m.playlist.Update(contentMsg)
+		cmds = append(cmds, cmd)
 		return m, tea.Batch(cmds...)
 
 	case ui.SearchResultMsg:
@@ -86,6 +95,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.PlayVideoMsg:
 		// Received playback request: start playing, switch to player view, and add to history
 		m.currentView = ViewPlayer
+		m.statusMsg = ""
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.player.PlayVideo(msg.Video))
 		cmds = append(cmds, ui.AddToHistory(m.historyStore, msg.Video))
@@ -101,6 +111,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.history, cmd = m.history.Update(msg)
 		return m, cmd
+
+	case ui.PlaylistsLoadedMsg:
+		var cmd tea.Cmd
+		m.playlist, cmd = m.playlist.Update(msg)
+		return m, cmd
+
+	case ui.PlaylistVideosLoadedMsg:
+		var cmd tea.Cmd
+		m.playlist, cmd = m.playlist.Update(msg)
+		return m, cmd
+
+	case ui.VideoAddedToPlaylistMsg:
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("エラー: %v", msg.Err)
+		} else {
+			m.statusMsg = fmt.Sprintf("「%s」を「%s」に追加しました", msg.VideoTitle, msg.PlaylistName)
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		// When search is in input mode, only handle ctrl+c for quitting
@@ -122,15 +150,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "1":
 			m.currentView = ViewSearch
+			m.statusMsg = ""
 			return m, nil
 		case "2":
 			m.currentView = ViewPlayer
+			m.statusMsg = ""
 			return m, nil
 		case "3":
 			m.currentView = ViewPlaylist
-			return m, nil
+			m.statusMsg = ""
+			return m, m.playlist.Refresh()
 		case "4":
 			m.currentView = ViewHistory
+			m.statusMsg = ""
 			return m, m.history.Refresh()
 		case "enter":
 			// In search list mode, Enter triggers video playback
@@ -140,6 +172,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, func() tea.Msg {
 						return ui.PlayVideoMsg{Video: *video}
 					}
+				}
+			}
+		case "a":
+			// In search list mode, add selected video to "お気に入り" playlist
+			if m.currentView == ViewSearch && !m.search.IsInputMode() {
+				video := m.search.SelectedVideo()
+				if video != nil {
+					return m, ui.AddVideoToPlaylist(m.playlistStore, "お気に入り", *video)
 				}
 			}
 		}
@@ -158,6 +198,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.history, cmd = m.history.Update(msg)
 			return m, cmd
+		case ViewPlaylist:
+			var cmd tea.Cmd
+			m.playlist, cmd = m.playlist.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -173,12 +217,21 @@ func (m Model) View() string {
 	case ViewPlayer:
 		content = m.player.View()
 	case ViewPlaylist:
-		content = "プレイリスト画面（未実装）"
+		content = m.playlist.View()
 	case ViewHistory:
 		content = m.history.View()
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, tabs, content)
+	parts := []string{tabs}
+	if m.statusMsg != "" {
+		statusStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("10")).
+			Padding(0, 1)
+		parts = append(parts, statusStyle.Render(m.statusMsg))
+	}
+	parts = append(parts, content)
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m Model) renderTabs() string {
