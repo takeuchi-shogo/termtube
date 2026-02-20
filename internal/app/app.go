@@ -99,6 +99,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.player.PlayVideo(msg.Video))
 		cmds = append(cmds, ui.AddToHistory(m.historyStore, msg.Video))
+		// Fetch related videos async based on the video title
+		cmds = append(cmds, ui.FetchRelatedVideos(msg.Video.Title))
 		return m, tea.Batch(cmds...)
 
 	case ui.PlayerStateMsg:
@@ -120,6 +122,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.PlaylistVideosLoadedMsg:
 		var cmd tea.Cmd
 		m.playlist, cmd = m.playlist.Update(msg)
+		return m, cmd
+
+	case ui.RelatedVideosMsg:
+		// Forward related videos to player model
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
 		return m, cmd
 
 	case ui.ChatMessageMsg:

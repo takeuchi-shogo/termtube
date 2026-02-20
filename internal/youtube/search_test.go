@@ -70,6 +70,37 @@ func TestParseSearchResults(t *testing.T) {
 	}
 }
 
+func TestExtractKeywords(t *testing.T) {
+	tests := []struct {
+		title    string
+		expected string
+	}{
+		{
+			title:    "Go言語 入門 チュートリアル 完全版 2024",
+			expected: "Go言語 入門 チュートリアル 完全版 2024",
+		},
+		{
+			title:    "Short",
+			expected: "Short",
+		},
+		{
+			title:    "One Two Three Four Five Six Seven",
+			expected: "One Two Three Four Five",
+		},
+		{
+			title:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		result := extractKeywords(tt.title)
+		if result != tt.expected {
+			t.Errorf("extractKeywords(%q) = %q, want %q", tt.title, result, tt.expected)
+		}
+	}
+}
+
 func TestParseSearchResultsEmpty(t *testing.T) {
 	videos, err := ParseSearchResults([]byte(""))
 	if err != nil {

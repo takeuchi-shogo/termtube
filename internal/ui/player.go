@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -20,14 +21,23 @@ type PlayVideoMsg struct {
 	Video youtube.Video
 }
 
+// RelatedVideosMsg carries fetched related videos.
+type RelatedVideosMsg struct {
+	Videos []youtube.Video
+	Err    error
+}
+
 // PlayerModel is a Bubble Tea sub-model that displays current playback info and controls mpv.
 type PlayerModel struct {
-	mpv     *player.MpvPlayer
-	current *youtube.Video
-	state   player.PlayerState
-	chat    ChatModel
-	width   int
-	height  int
+	mpv           *player.MpvPlayer
+	current       *youtube.Video
+	state         player.PlayerState
+	chat          ChatModel
+	relatedVideos []youtube.Video
+	showRelated   bool
+	relatedCursor int
+	width         int
+	height        int
 }
 
 // NewPlayerModel creates a new PlayerModel with the given MpvPlayer.
@@ -56,7 +66,34 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 		m.chat.AddMessage(msg.Message)
 		return m, nil
 
+	case RelatedVideosMsg:
+		if msg.Err == nil {
+			m.relatedVideos = msg.Videos
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		// 関連動画パネルが表示中の場合、j/k/enter を関連動画リストに委譲
+		if m.showRelated && len(m.relatedVideos) > 0 {
+			switch msg.String() {
+			case "j":
+				if m.relatedCursor < len(m.relatedVideos)-1 {
+					m.relatedCursor++
+				}
+				return m, nil
+			case "k":
+				if m.relatedCursor > 0 {
+					m.relatedCursor--
+				}
+				return m, nil
+			case "enter":
+				video := m.relatedVideos[m.relatedCursor]
+				return m, func() tea.Msg {
+					return PlayVideoMsg{Video: video}
+				}
+			}
+		}
+
 		switch msg.String() {
 		case " ":
 			// Toggle pause
@@ -102,6 +139,10 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 			// Toggle chat visibility
 			m.chat.Toggle()
 			return m, nil
+		case "tab":
+			// Toggle related videos panel
+			m.showRelated = !m.showRelated
+			return m, nil
 		}
 	}
 
@@ -141,7 +182,7 @@ func (m PlayerModel) View() string {
 	volumeBar := renderVolumeBar(m.state.Volume, m.width)
 
 	// Help text
-	help := HelpStyle.Render("Space: 再生/一時停止 | ←/→: シーク ±5秒 | ↑/↓: 音量 ±5 | c: チャット | 1: 検索に戻る | q: 終了")
+	help := HelpStyle.Render("Space: 再生/一時停止 | ←/→: シーク ±5秒 | ↑/↓: 音量 ±5 | c: チャット | Tab: 関連 | 1: 検索に戻る | q: 終了")
 
 	parts := []string{
 		"",
@@ -159,15 +200,79 @@ func (m PlayerModel) View() string {
 		parts = append(parts, chatView, "")
 	}
 
+	// Related videos panel
+	if m.showRelated {
+		relatedView := m.renderRelated()
+		parts = append(parts, relatedView, "")
+	}
+
 	parts = append(parts, help)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// renderRelated は関連動画パネルを描画する。
+func (m PlayerModel) renderRelated() string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("205"))
+
+	header := titleStyle.Render("-- 関連動画 --")
+
+	if len(m.relatedVideos) == 0 {
+		noVideos := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Render("関連動画を取得中...")
+		return lipgloss.JoinVertical(lipgloss.Left, header, noVideos)
+	}
+
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170"))
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	channelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
+	var lines []string
+	maxDisplay := 10
+	if len(m.relatedVideos) < maxDisplay {
+		maxDisplay = len(m.relatedVideos)
+	}
+
+	for i := 0; i < maxDisplay; i++ {
+		v := m.relatedVideos[i]
+		dur := v.DurationStr
+		if dur == "" {
+			dur = "LIVE"
+		}
+		line := fmt.Sprintf("%s  [%s]", v.Title, dur)
+		channelLine := channelStyle.Render(fmt.Sprintf("  %s", v.Channel))
+
+		if i == m.relatedCursor {
+			lines = append(lines, selectedStyle.Render("> "+line))
+		} else {
+			lines = append(lines, normalStyle.Render("  "+line))
+		}
+		lines = append(lines, channelLine)
+	}
+
+	content := strings.Join(lines, "\n")
+	relatedBox := BorderStyle.
+		Width(m.width - 4).
+		Render(content)
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, relatedBox)
 }
 
 // PlayVideo sets the current video and returns an async command that calls mpv.Play.
 func (m *PlayerModel) PlayVideo(video youtube.Video) tea.Cmd {
 	m.current = &video
 	m.chat.Clear()
+	m.relatedVideos = nil
+	m.relatedCursor = 0
 	mpv := m.mpv
 	url := video.URL
 	return func() tea.Msg {
@@ -183,6 +288,14 @@ func (m *PlayerModel) PlayVideo(video youtube.Video) tea.Cmd {
 		return PlayerStateMsg{
 			State: mpv.GetState(),
 		}
+	}
+}
+
+// FetchRelatedVideos は関連動画を非同期で取得するコマンドを返す。
+func FetchRelatedVideos(videoTitle string) tea.Cmd {
+	return func() tea.Msg {
+		videos, err := youtube.GetRelated(context.Background(), videoTitle, 10)
+		return RelatedVideosMsg{Videos: videos, Err: err}
 	}
 }
 
