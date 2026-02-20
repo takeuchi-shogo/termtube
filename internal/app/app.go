@@ -122,6 +122,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playlist, cmd = m.playlist.Update(msg)
 		return m, cmd
 
+	case ui.ChatMessageMsg:
+		// Forward chat messages to player model
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
+		return m, cmd
+
 	case ui.VideoAddedToPlaylistMsg:
 		if msg.Err != nil {
 			m.statusMsg = fmt.Sprintf("エラー: %v", msg.Err)

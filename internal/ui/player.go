@@ -25,6 +25,7 @@ type PlayerModel struct {
 	mpv     *player.MpvPlayer
 	current *youtube.Video
 	state   player.PlayerState
+	chat    ChatModel
 	width   int
 	height  int
 }
@@ -34,6 +35,7 @@ func NewPlayerModel(mpv *player.MpvPlayer) PlayerModel {
 	return PlayerModel{
 		mpv:   mpv,
 		state: mpv.GetState(),
+		chat:  NewChatModel(defaultMaxChatMessages),
 	}
 }
 
@@ -43,10 +45,15 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.chat.SetSize(msg.Width, msg.Height/3)
 		return m, nil
 
 	case PlayerStateMsg:
 		m.state = msg.State
+		return m, nil
+
+	case ChatMessageMsg:
+		m.chat.AddMessage(msg.Message)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -91,6 +98,10 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 				m.state.Volume = newVol
 			}
 			return m, nil
+		case "c":
+			// Toggle chat visibility
+			m.chat.Toggle()
+			return m, nil
 		}
 	}
 
@@ -130,9 +141,9 @@ func (m PlayerModel) View() string {
 	volumeBar := renderVolumeBar(m.state.Volume, m.width)
 
 	// Help text
-	help := HelpStyle.Render("Space: 再生/一時停止 | ←/→: シーク ±5秒 | ↑/↓: 音量 ±5 | 1: 検索に戻る | q: 終了")
+	help := HelpStyle.Render("Space: 再生/一時停止 | ←/→: シーク ±5秒 | ↑/↓: 音量 ±5 | c: チャット | 1: 検索に戻る | q: 終了")
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	parts := []string{
 		"",
 		title,
 		channel,
@@ -140,13 +151,23 @@ func (m PlayerModel) View() string {
 		playbackInfo,
 		volumeBar,
 		"",
-		help,
-	)
+	}
+
+	// Chat panel
+	chatView := m.chat.View()
+	if chatView != "" {
+		parts = append(parts, chatView, "")
+	}
+
+	parts = append(parts, help)
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // PlayVideo sets the current video and returns an async command that calls mpv.Play.
 func (m *PlayerModel) PlayVideo(video youtube.Video) tea.Cmd {
 	m.current = &video
+	m.chat.Clear()
 	mpv := m.mpv
 	url := video.URL
 	return func() tea.Msg {
