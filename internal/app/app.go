@@ -1,9 +1,13 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/takeuchishougo/termtube/internal/player"
+	"github.com/takeuchishougo/termtube/internal/storage"
 	"github.com/takeuchishougo/termtube/internal/ui"
 )
 
@@ -17,21 +21,34 @@ const (
 )
 
 type Model struct {
-	currentView View
-	width       int
-	height      int
-	search      ui.SearchModel
-	player      ui.PlayerModel
-	mpv         *player.MpvPlayer
+	currentView  View
+	width        int
+	height       int
+	search       ui.SearchModel
+	player       ui.PlayerModel
+	history      ui.HistoryModel
+	mpv          *player.MpvPlayer
+	historyStore *storage.HistoryStore
 }
 
 func New() Model {
 	mpv := player.NewMpvPlayer()
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "."
+	}
+	dataDir := filepath.Join(homeDir, ".local", "share", "termtube")
+
+	historyStore := storage.NewHistoryStore(filepath.Join(dataDir, "history.json"))
+
 	return Model{
-		currentView: ViewSearch,
-		search:      ui.NewSearchModel(),
-		player:      ui.NewPlayerModel(mpv),
-		mpv:         mpv,
+		currentView:  ViewSearch,
+		search:       ui.NewSearchModel(),
+		player:       ui.NewPlayerModel(mpv),
+		history:      ui.NewHistoryModel(historyStore),
+		mpv:          mpv,
+		historyStore: historyStore,
 	}
 }
 
@@ -44,7 +61,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Pass window size to search model (reserve space for tab bar)
+		// Pass window size to all sub-models (reserve space for tab bar)
 		contentMsg := tea.WindowSizeMsg{
 			Width:  msg.Width,
 			Height: msg.Height - 1, // 1 line for tab bar
@@ -54,6 +71,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.search, cmd = m.search.Update(contentMsg)
 		cmds = append(cmds, cmd)
 		m.player, cmd = m.player.Update(contentMsg)
+		cmds = append(cmds, cmd)
+		m.history, cmd = m.history.Update(contentMsg)
 		cmds = append(cmds, cmd)
 		return m, tea.Batch(cmds...)
 
@@ -65,15 +84,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case ui.PlayVideoMsg:
-		// Received playback request: start playing and switch to player view
+		// Received playback request: start playing, switch to player view, and add to history
 		m.currentView = ViewPlayer
-		cmd := m.player.PlayVideo(msg.Video)
-		return m, cmd
+		var cmds []tea.Cmd
+		cmds = append(cmds, m.player.PlayVideo(msg.Video))
+		cmds = append(cmds, ui.AddToHistory(m.historyStore, msg.Video))
+		return m, tea.Batch(cmds...)
 
 	case ui.PlayerStateMsg:
 		// Forward player state updates to player model
 		var cmd tea.Cmd
 		m.player, cmd = m.player.Update(msg)
+		return m, cmd
+
+	case ui.HistoryLoadedMsg:
+		var cmd tea.Cmd
+		m.history, cmd = m.history.Update(msg)
 		return m, cmd
 
 	case tea.KeyMsg:
@@ -105,7 +131,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "4":
 			m.currentView = ViewHistory
-			return m, nil
+			return m, m.history.Refresh()
 		case "enter":
 			// In search list mode, Enter triggers video playback
 			if m.currentView == ViewSearch && !m.search.IsInputMode() {
@@ -128,6 +154,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.player, cmd = m.player.Update(msg)
 			return m, cmd
+		case ViewHistory:
+			var cmd tea.Cmd
+			m.history, cmd = m.history.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -145,7 +175,7 @@ func (m Model) View() string {
 	case ViewPlaylist:
 		content = "プレイリスト画面（未実装）"
 	case ViewHistory:
-		content = "履歴画面（未実装）"
+		content = m.history.View()
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, tabs, content)
