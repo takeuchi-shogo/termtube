@@ -1,0 +1,71 @@
+version: '3'
+
+vars:
+  BIN: termtube
+  PREFIX: /usr/local/bin
+
+tasks:
+  setup:
+    desc: 依存ツールのインストール & ビルドを一発で実行
+    cmds:
+      - task: deps
+      - task: build
+      - 'echo ""'
+      - 'echo "✅ セットアップ完了！ ./{{.BIN}} で起動できます"'
+
+  deps:
+    desc: 外部依存ツール (mpv, yt-dlp) をインストール
+    cmds:
+      - 'echo "🔍 依存ツールを確認中..."'
+      - 'command -v mpv >/dev/null 2>&1 && echo "  ✅ mpv" || { echo "  📦 mpv をインストール中..."; brew install mpv; }'
+      - 'command -v yt-dlp >/dev/null 2>&1 && echo "  ✅ yt-dlp" || { echo "  📦 yt-dlp をインストール中..."; brew install yt-dlp; }'
+      - 'echo "✅ 依存ツール OK"'
+    preconditions:
+      - sh: command -v brew
+        msg: "❌ Homebrew が必要です: https://brew.sh"
+
+  build:
+    desc: バイナリをビルド
+    cmds:
+      - 'go build -o {{.BIN}} .'
+      - 'echo "✅ ビルド完了: ./{{.BIN}}"'
+    sources:
+      - './**/*.go'
+      - ./go.mod
+      - ./go.sum
+    generates:
+      - './{{.BIN}}'
+
+  install:
+    desc: バイナリを PATH にインストール
+    deps: [build]
+    cmds:
+      - 'install -m 755 {{.BIN}} {{.PREFIX}}/{{.BIN}}'
+      - 'echo "✅ インストール完了: {{.PREFIX}}/{{.BIN}}"'
+
+  uninstall:
+    desc: インストールしたバイナリを削除
+    cmds:
+      - 'rm -f {{.PREFIX}}/{{.BIN}}'
+      - 'echo "✅ アンインストール完了"'
+
+  test:
+    desc: テスト実行
+    cmds:
+      - go test ./...
+
+  clean:
+    desc: ビルド成果物を削除
+    cmds:
+      - 'rm -f {{.BIN}}'
+
+  run:
+    desc: ビルドして起動
+    deps: [build]
+    cmds:
+      - './{{.BIN}}'
+
+  default:
+    desc: ヘルプ表示
+    cmds:
+      - task --list
