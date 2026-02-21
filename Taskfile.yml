@@ -1,7 +1,8 @@
 version: '3'
 
 vars:
-  BIN: termtube
+  BIN: bin/termtube
+  NAME: termtube
   PREFIX: /usr/local/bin
 
 tasks:
@@ -27,6 +28,7 @@ tasks:
   build:
     desc: バイナリをビルド
     cmds:
+      - mkdir -p bin
       - 'go build -o {{.BIN}} .'
       - 'echo "✅ ビルド完了: ./{{.BIN}}"'
     sources:
@@ -40,13 +42,13 @@ tasks:
     desc: バイナリを PATH にインストール
     deps: [build]
     cmds:
-      - 'install -m 755 {{.BIN}} {{.PREFIX}}/{{.BIN}}'
-      - 'echo "✅ インストール完了: {{.PREFIX}}/{{.BIN}}"'
+      - 'install -m 755 {{.BIN}} {{.PREFIX}}/{{.NAME}}'
+      - 'echo "✅ インストール完了: {{.PREFIX}}/{{.NAME}}"'
 
   uninstall:
     desc: インストールしたバイナリを削除
     cmds:
-      - 'rm -f {{.PREFIX}}/{{.BIN}}'
+      - 'rm -f {{.PREFIX}}/{{.NAME}}'
       - 'echo "✅ アンインストール完了"'
 
   test:
@@ -57,7 +59,7 @@ tasks:
   clean:
     desc: ビルド成果物を削除
     cmds:
-      - 'rm -f {{.BIN}}'
+      - rm -rf bin
 
   run:
     desc: ビルドして起動
