@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -162,6 +164,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fetch related videos async based on the video title
 		cmds = append(cmds, ui.FetchRelatedVideos(msg.Video.Title))
 		return m, tea.Batch(cmds...)
+
+	case ui.StreamURLResolvedMsg:
+		// ストリーム URL 解決結果を player に転送
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
+		if msg.Err != nil && !errors.Is(msg.Err, context.Canceled) {
+			if errors.Is(msg.Err, context.DeadlineExceeded) {
+				m.statusMsg = "ストリームURLの取得がタイムアウトしました"
+			} else {
+				m.statusMsg = fmt.Sprintf("URL解決エラー: %v", msg.Err)
+			}
+		}
+		return m, cmd
 
 	case ui.MpvExecFinishedMsg:
 		// ターミナル VO でのフォアグラウンド再生が終了 → player に転送
