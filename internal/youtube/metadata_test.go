@@ -25,7 +25,7 @@ func TestParseMetadata(t *testing.T) {
 		t.Errorf("ChannelID = %q, want %q", video.ChannelID, "UC_META")
 	}
 	if video.Duration != 600 {
-		t.Errorf("Duration = %d, want %d", video.Duration, 600)
+		t.Errorf("Duration = %v, want %v", video.Duration, 600.0)
 	}
 	if video.DurationStr != "10:00" {
 		t.Errorf("DurationStr = %q, want %q", video.DurationStr, "10:00")

@@ -41,19 +41,49 @@ type MpvPlayer struct {
 	requestID     int
 	done          chan struct{}
 	doneOnce      sync.Once
+	videoOutput   string
 }
 
 // NewMpvPlayer は新しい MpvPlayer を生成する。
 // ソケットパスは /tmp/termtube-mpv-{pid}.sock、デフォルト音量は 80。
 func NewMpvPlayer() *MpvPlayer {
 	return &MpvPlayer{
-		socketPath: fmt.Sprintf("/tmp/termtube-mpv-%d.sock", os.Getpid()),
+		socketPath:  fmt.Sprintf("/tmp/termtube-mpv-%d.sock", os.Getpid()),
+		videoOutput: "kitty",
 		state: PlayerState{
 			State:  StateStopped,
 			Volume: 80,
 		},
 		done: make(chan struct{}),
 	}
+}
+
+// SetVideoOutput は mpv の映像出力方式を設定する（null, kitty, tct 等）。
+func (p *MpvPlayer) SetVideoOutput(vo string) {
+	p.videoOutput = vo
+}
+
+// IsTerminalVO はターミナル内映像出力（kitty, tct, sixel）かどうかを返す。
+func (p *MpvPlayer) IsTerminalVO() bool {
+	switch p.videoOutput {
+	case "kitty", "tct", "sixel":
+		return true
+	default:
+		return false
+	}
+}
+
+// BuildForegroundCmd はターミナル VO 用のフォアグラウンド再生コマンドを構築する。
+// IPC ソケット（--input-ipc-server）と --no-terminal は使用しない。
+// tea.ExecProcess 経由で Bubble Tea が mpv に stdin/stdout/stderr を直接渡すため、
+// mpv がターミナルを全面制御し、キーボード入力・映像出力を直接処理する。
+func (p *MpvPlayer) BuildForegroundCmd(url string) *exec.Cmd {
+	return exec.Command("mpv",
+		fmt.Sprintf("--vo=%s", p.videoOutput),
+		fmt.Sprintf("--volume=%d", p.state.Volume),
+		"--really-quiet",
+		"--", url,
+	)
 }
 
 // nextRequestID はスレッドセーフに requestID をインクリメントして返す。
@@ -77,7 +107,7 @@ func (p *MpvPlayer) Play(url string) error {
 
 	// mpv プロセスを起動
 	cmd := exec.Command("mpv",
-		"--vo=sixel",
+		fmt.Sprintf("--vo=%s", p.videoOutput),
 		"--no-terminal",
 		fmt.Sprintf("--input-ipc-server=%s", p.socketPath),
 		fmt.Sprintf("--volume=%d", p.state.Volume),
@@ -233,8 +263,20 @@ func (p *MpvPlayer) OnStateChange(fn func(PlayerState)) {
 }
 
 // listenEvents は mpv ソケットからイベントを読み取り処理する。
+// 同時に定期的に再生位置・再生時間をポーリングして更新する。
 func (p *MpvPlayer) listenEvents() {
-	scanner := bufio.NewScanner(p.conn)
+	p.mu.RLock()
+	conn := p.conn
+	p.mu.RUnlock()
+	if conn == nil {
+		return
+	}
+
+	// property を observe して自動通知を受け取る
+	p.observeProperty(1, "time-pos")
+	p.observeProperty(2, "duration")
+
+	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		select {
 		case <-p.done:
@@ -244,12 +286,56 @@ func (p *MpvPlayer) listenEvents() {
 
 		line := scanner.Bytes()
 
-		// イベントかレスポンスかを判定
+		// property-change イベントを処理
+		var propChange struct {
+			Event string      `json:"event"`
+			ID    int         `json:"id"`
+			Name  string      `json:"name"`
+			Data  interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(line, &propChange); err == nil {
+			if propChange.Event == "property-change" {
+				p.handlePropertyChange(propChange.Name, propChange.Data)
+				continue
+			}
+		}
+
+		// 通常のイベントを処理
 		var event MpvEvent
 		if err := json.Unmarshal(line, &event); err == nil && event.Event != "" {
 			p.handleEvent(event)
 		}
 	}
+}
+
+// observeProperty は mpv に property の変更通知を登録する。
+func (p *MpvPlayer) observeProperty(id int, name string) {
+	_ = p.sendCommand(MpvCommand{
+		Command:   []interface{}{"observe_property", id, name},
+		RequestID: p.nextRequestID(),
+	})
+}
+
+// handlePropertyChange は mpv の property-change イベントを処理する。
+func (p *MpvPlayer) handlePropertyChange(name string, data interface{}) {
+	if data == nil {
+		return
+	}
+	val, ok := data.(float64)
+	if !ok {
+		return
+	}
+
+	p.mu.Lock()
+	switch name {
+	case "time-pos":
+		p.state.Position = val
+	case "duration":
+		p.state.Duration = val
+	}
+	p.mu.Unlock()
+
+	p.notifyStateChange()
 }
 
 // handleEvent は mpv イベントに応じてプレイヤー状態を更新する。

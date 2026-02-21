@@ -15,8 +15,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Player.DefaultMode != "focus" {
 		t.Errorf("expected default mode 'focus', got %q", cfg.Player.DefaultMode)
 	}
-	if cfg.Player.SixelQuality != "medium" {
-		t.Errorf("expected sixel quality 'medium', got %q", cfg.Player.SixelQuality)
+	if cfg.Player.VideoOutput != "kitty" {
+		t.Errorf("expected video output 'kitty', got %q", cfg.Player.VideoOutput)
 	}
 	if cfg.Chat.Enabled != true {
 		t.Errorf("expected chat enabled true, got %v", cfg.Chat.Enabled)

@@ -4,12 +4,28 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/takeuchishougo/termtube/internal/player"
 	"github.com/takeuchishougo/termtube/internal/youtube"
 )
+
+// PlayerTickMsg は定期的な状態ポーリングのための内部メッセージ。
+type PlayerTickMsg struct{}
+
+// MpvExecFinishedMsg はターミナル VO でのフォアグラウンド mpv 再生が終了したときのメッセージ。
+type MpvExecFinishedMsg struct {
+	Err error
+}
+
+// StreamURLResolvedMsg はストリーム URL 解決の結果を伝えるメッセージ。
+type StreamURLResolvedMsg struct {
+	StreamURL   string
+	OriginalURL string // 鮮度チェック用（動画切替対策）
+	Err         error
+}
 
 // ViewMode は再生画面の表示モードを表す。
 type ViewMode int
@@ -66,16 +82,19 @@ type VideoMetadataMsg struct {
 
 // PlayerModel is a Bubble Tea sub-model that displays current playback info and controls mpv.
 type PlayerModel struct {
-	mpv           *player.MpvPlayer
-	current       *youtube.Video
-	state         player.PlayerState
-	chat          ChatModel
-	relatedVideos []youtube.Video
-	showRelated   bool
-	relatedCursor int
-	viewMode      ViewMode
-	width         int
-	height        int
+	mpv             *player.MpvPlayer
+	current         *youtube.Video
+	state           player.PlayerState
+	chat            ChatModel
+	relatedVideos   []youtube.Video
+	showRelated     bool
+	relatedCursor   int
+	viewMode        ViewMode
+	width           int
+	height          int
+	resolving       bool               // URL解決中フラグ
+	resolvingCancel context.CancelFunc // 解決のキャンセル関数
+	resolvingDots   int                // ローディングアニメーション用カウンタ
 }
 
 // NewPlayerModel creates a new PlayerModel with the given MpvPlayer.
@@ -98,6 +117,13 @@ func (m PlayerModel) GetViewMode() ViewMode {
 	return m.viewMode
 }
 
+// PlayerTick は 500ms ごとに PlayerTickMsg を送る Bubble Tea コマンドを返す。
+func PlayerTick() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return PlayerTickMsg{}
+	})
+}
+
 // Update handles messages for the player model.
 func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -107,9 +133,50 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 		m.chat.SetSize(msg.Width, msg.Height/3)
 		return m, nil
 
+	case PlayerTickMsg:
+		if m.resolving {
+			// URL 解決中: ローディングアニメーションを更新
+			m.resolvingDots = (m.resolvingDots + 1) % 4
+			return m, PlayerTick()
+		}
+		// mpv から最新の再生状態を取得して表示を更新
+		if m.mpv != nil && m.current != nil {
+			m.state = m.mpv.GetState()
+		}
+		return m, PlayerTick()
+
 	case PlayerStateMsg:
 		m.state = msg.State
 		return m, nil
+
+	case MpvExecFinishedMsg:
+		// ターミナル VO でのフォアグラウンド再生が終了 → Stopped にリセット
+		m.state.State = player.StateStopped
+		return m, nil
+
+	case StreamURLResolvedMsg:
+		// resolving フラグが false の場合はキャンセル済みとして破棄
+		if !m.resolving {
+			return m, nil
+		}
+		// 鮮度チェック: 動画が切り替わっていたら破棄
+		if m.current == nil || m.current.URL != msg.OriginalURL {
+			return m, nil
+		}
+		m.resolving = false
+		if m.resolvingCancel != nil {
+			m.resolvingCancel()
+			m.resolvingCancel = nil
+		}
+		if msg.Err != nil || msg.StreamURL == "" {
+			m.state.State = player.StateStopped
+			return m, nil
+		}
+		// Phase 2: 解決済み URL で mpv をフォアグラウンド起動
+		cmd := m.mpv.BuildForegroundCmd(msg.StreamURL)
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return MpvExecFinishedMsg{Err: err}
+		})
 
 	case ChatMessageMsg:
 		m.chat.AddMessage(msg.Message)
@@ -134,6 +201,19 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// URL 解決中: Esc でキャンセル、他のキーはブロック
+		if m.resolving {
+			if msg.String() == "esc" {
+				if m.resolvingCancel != nil {
+					m.resolvingCancel()
+				}
+				m.resolving = false
+				m.resolvingCancel = nil
+				m.state.State = player.StateStopped
+			}
+			return m, nil
+		}
+
 		// 関連動画パネルが表示中の場合、j/k/enter を関連動画リストに委譲
 		if m.showRelated && len(m.relatedVideos) > 0 {
 			switch msg.String() {
@@ -226,11 +306,39 @@ func (m PlayerModel) View() string {
 			Render("再生中の動画はありません")
 	}
 
+	if m.resolving {
+		return m.viewResolving()
+	}
+
 	if m.viewMode == ModeBGV {
 		return m.viewBGV()
 	}
 
 	return m.viewFocus()
+}
+
+// viewResolving はストリーム URL 解決中のローディング画面を描画する。
+func (m PlayerModel) viewResolving() string {
+	title := TitleStyle.Render(m.current.Title)
+	channel := SubtitleStyle.Render(m.current.Channel)
+
+	dots := strings.Repeat(".", m.resolvingDots)
+	loadingStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("214"))
+	loading := loadingStyle.Render(fmt.Sprintf("ストリームURL解決中%s", dots))
+
+	help := HelpStyle.Render("Esc: キャンセル")
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		"",
+		title,
+		channel,
+		"",
+		loading,
+		"",
+		help,
+	)
 }
 
 // viewFocus は集中視聴モードの表示を描画する。
@@ -417,9 +525,35 @@ func (m PlayerModel) PlayVideo(video youtube.Video) (PlayerModel, tea.Cmd) {
 	m.chat.Clear()
 	m.relatedVideos = nil
 	m.relatedCursor = 0
+
+	if m.mpv.IsTerminalVO() {
+		// ターミナル VO: 2フェーズ方式
+		// Phase 1: yt-dlp でストリーム URL を非同期解決（TUI はレスポンシブなまま）
+		// Phase 2: 解決後に tea.ExecProcess で mpv を起動
+		if m.resolvingCancel != nil {
+			m.resolvingCancel()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		m.resolving = true
+		m.resolvingCancel = cancel
+		m.resolvingDots = 0
+		videoURL := video.URL
+		resolveCmd := func() tea.Msg {
+			defer cancel() // context リソースを必ず解放
+			streamURL, err := youtube.GetStreamURL(ctx, videoURL)
+			return StreamURLResolvedMsg{
+				StreamURL:   streamURL,
+				OriginalURL: videoURL,
+				Err:         err,
+			}
+		}
+		return m, tea.Batch(resolveCmd, PlayerTick())
+	}
+
+	// IPC VO: 既存のバックグラウンド再生 + IPC 制御
 	mpv := m.mpv
 	url := video.URL
-	cmd := func() tea.Msg {
+	playCmd := func() tea.Msg {
 		err := mpv.Play(url)
 		if err != nil {
 			return PlayerStateMsg{
@@ -432,7 +566,7 @@ func (m PlayerModel) PlayVideo(video youtube.Video) (PlayerModel, tea.Cmd) {
 			State: mpv.GetState(),
 		}
 	}
-	return m, cmd
+	return m, tea.Batch(playCmd, PlayerTick())
 }
 
 // FetchRelatedVideos は関連動画を非同期で取得するコマンドを返す。

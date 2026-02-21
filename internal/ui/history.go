@@ -142,7 +142,7 @@ func AddToHistory(store *storage.HistoryStore, video youtube.Video) tea.Cmd {
 			Title:     video.Title,
 			Channel:   video.Channel,
 			WatchedAt: time.Now(),
-			Duration:  video.Duration,
+			Duration:  int(video.Duration),
 		}
 		err := store.Add(entry)
 		return HistorySavedMsg{Err: err}
