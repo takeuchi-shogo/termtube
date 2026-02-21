@@ -81,6 +81,7 @@ func (p *MpvPlayer) BuildForegroundCmd(url string) *exec.Cmd {
 	return exec.Command("mpv",
 		fmt.Sprintf("--vo=%s", p.videoOutput),
 		fmt.Sprintf("--volume=%d", p.state.Volume),
+		"--really-quiet",
 		"--", url,
 	)
 }
