@@ -4,12 +4,21 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/takeuchishougo/termtube/internal/player"
 	"github.com/takeuchishougo/termtube/internal/youtube"
 )
+
+// PlayerTickMsg は定期的な状態ポーリングのための内部メッセージ。
+type PlayerTickMsg struct{}
+
+// MpvExecFinishedMsg はターミナル VO でのフォアグラウンド mpv 再生が終了したときのメッセージ。
+type MpvExecFinishedMsg struct {
+	Err error
+}
 
 // ViewMode は再生画面の表示モードを表す。
 type ViewMode int
@@ -98,6 +107,13 @@ func (m PlayerModel) GetViewMode() ViewMode {
 	return m.viewMode
 }
 
+// PlayerTick は 500ms ごとに PlayerTickMsg を送る Bubble Tea コマンドを返す。
+func PlayerTick() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return PlayerTickMsg{}
+	})
+}
+
 // Update handles messages for the player model.
 func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -107,8 +123,20 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 		m.chat.SetSize(msg.Width, msg.Height/3)
 		return m, nil
 
+	case PlayerTickMsg:
+		// mpv から最新の再生状態を取得して表示を更新
+		if m.mpv != nil && m.current != nil {
+			m.state = m.mpv.GetState()
+		}
+		return m, PlayerTick()
+
 	case PlayerStateMsg:
 		m.state = msg.State
+		return m, nil
+
+	case MpvExecFinishedMsg:
+		// ターミナル VO でのフォアグラウンド再生が終了 → Stopped にリセット
+		m.state.State = player.StateStopped
 		return m, nil
 
 	case ChatMessageMsg:
@@ -417,9 +445,20 @@ func (m PlayerModel) PlayVideo(video youtube.Video) (PlayerModel, tea.Cmd) {
 	m.chat.Clear()
 	m.relatedVideos = nil
 	m.relatedCursor = 0
+
+	if m.mpv.IsTerminalVO() {
+		// ターミナル VO: tea.ExecProcess でフォアグラウンド再生。
+		// Bubble Tea を一時停止し、mpv が直接ターミナルを制御する。
+		cmd := m.mpv.BuildForegroundCmd(video.URL)
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return MpvExecFinishedMsg{Err: err}
+		})
+	}
+
+	// IPC VO: 既存のバックグラウンド再生 + IPC 制御
 	mpv := m.mpv
 	url := video.URL
-	cmd := func() tea.Msg {
+	playCmd := func() tea.Msg {
 		err := mpv.Play(url)
 		if err != nil {
 			return PlayerStateMsg{
@@ -432,7 +471,7 @@ func (m PlayerModel) PlayVideo(video youtube.Video) (PlayerModel, tea.Cmd) {
 			State: mpv.GetState(),
 		}
 	}
-	return m, cmd
+	return m, tea.Batch(playCmd, PlayerTick())
 }
 
 // FetchRelatedVideos は関連動画を非同期で取得するコマンドを返す。

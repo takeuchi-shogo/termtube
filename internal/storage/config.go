@@ -19,7 +19,7 @@ type Config struct {
 type PlayerConfig struct {
 	DefaultMode   string `toml:"default_mode"`
 	DefaultVolume int    `toml:"default_volume"`
-	SixelQuality  string `toml:"sixel_quality"`
+	VideoOutput   string `toml:"video_output"`
 }
 
 // ChatConfig はチャット関連の設定。
@@ -40,7 +40,7 @@ func DefaultConfig() Config {
 		Player: PlayerConfig{
 			DefaultMode:   "focus",
 			DefaultVolume: 80,
-			SixelQuality:  "medium",
+			VideoOutput:   "kitty",
 		},
 		Chat: ChatConfig{
 			Enabled:  true,

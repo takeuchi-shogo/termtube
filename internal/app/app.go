@@ -65,6 +65,11 @@ func newModel(initialURL string) Model {
 		fmt.Fprintf(os.Stderr, "warning: failed to load config: %v\n", cfgErr)
 	}
 
+	// 設定から映像出力方式を適用
+	if cfg.Player.VideoOutput != "" {
+		mpv.SetVideoOutput(cfg.Player.VideoOutput)
+	}
+
 	historyStore := storage.NewHistoryStore(filepath.Join(dataDir, "history.json"))
 	playlistStore := storage.NewPlaylistStore(filepath.Join(dataDir, "playlists"))
 
@@ -157,6 +162,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fetch related videos async based on the video title
 		cmds = append(cmds, ui.FetchRelatedVideos(msg.Video.Title))
 		return m, tea.Batch(cmds...)
+
+	case ui.MpvExecFinishedMsg:
+		// ターミナル VO でのフォアグラウンド再生が終了 → player に転送
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("再生エラー: %v", msg.Err)
+		}
+		return m, cmd
+
+	case ui.PlayerTickMsg:
+		// Forward player tick to player model (state polling)
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
+		return m, cmd
 
 	case ui.PlayerStateMsg:
 		// Forward player state updates to player model
