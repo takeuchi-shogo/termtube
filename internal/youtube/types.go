@@ -12,7 +12,7 @@ type Video struct {
 	Title       string `json:"title"`
 	Channel     string `json:"channel"`
 	ChannelID   string `json:"channel_id"`
-	Duration    int    `json:"duration"`
+	Duration    float64 `json:"duration"`
 	DurationStr string `json:"duration_string"`
 	ViewCount   int64  `json:"view_count"`
 	URL         string `json:"webpage_url"`

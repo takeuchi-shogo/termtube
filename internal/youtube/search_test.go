@@ -33,7 +33,7 @@ func TestParseSearchResults(t *testing.T) {
 		t.Errorf("video[0].ChannelID = %q, want %q", v1.ChannelID, "UC_A")
 	}
 	if v1.Duration != 120 {
-		t.Errorf("video[0].Duration = %d, want %d", v1.Duration, 120)
+		t.Errorf("video[0].Duration = %v, want %v", v1.Duration, 120.0)
 	}
 	if v1.DurationStr != "2:00" {
 		t.Errorf("video[0].DurationStr = %q, want %q", v1.DurationStr, "2:00")
