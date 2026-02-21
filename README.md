@@ -13,18 +13,42 @@ mpv の Sixel 出力と yt-dlp を組み合わせ、ターミナル上で動画�
 
 Sixel 対応ターミナルが必要です（WezTerm, iTerm2, kitty 等）。
 
-## インストール
+## セットアップ
 
-```bash
-go install github.com/takeuchishougo/termtube@latest
-```
-
-またはソースからビルド:
+[Task](https://taskfile.dev/) を使えばワンコマンドで依存インストールからビルドまで完了します。
 
 ```bash
 git clone https://github.com/takeuchi-shogo/termtube.git
 cd termtube
+task setup
+```
+
+### Task コマンド一覧
+
+| コマンド | 内容 |
+|---------|------|
+| `task setup` | 依存ツール (mpv, yt-dlp) のインストール + ビルド |
+| `task run` | ビルドして起動 |
+| `task build` | バイナリをビルド |
+| `task test` | テスト実行 |
+| `task install` | `/usr/local/bin` にインストール |
+| `task uninstall` | インストールしたバイナリを削除 |
+| `task clean` | ビルド成果物を削除 |
+| `task deps` | 依存ツールのみインストール |
+
+### 手動インストール
+
+Task を使わない場合:
+
+```bash
+brew install mpv yt-dlp
 go build -o termtube .
+```
+
+または `go install`:
+
+```bash
+go install github.com/takeuchishougo/termtube@latest
 ```
 
 ## 使い方
