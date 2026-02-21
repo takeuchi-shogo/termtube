@@ -59,7 +59,11 @@ func newModel(initialURL string) Model {
 	dataDir := filepath.Join(homeDir, ".local", "share", "termtube")
 	configPath := filepath.Join(dataDir, "config.toml")
 
-	cfg, _ := storage.LoadConfig(configPath)
+	cfg, cfgErr := storage.LoadConfig(configPath)
+	if cfgErr != nil {
+		// config load failure is non-fatal; use defaults but log to stderr
+		fmt.Fprintf(os.Stderr, "warning: failed to load config: %v\n", cfgErr)
+	}
 
 	historyStore := storage.NewHistoryStore(filepath.Join(dataDir, "history.json"))
 	playlistStore := storage.NewPlaylistStore(filepath.Join(dataDir, "playlists"))
@@ -94,15 +98,17 @@ func (m Model) Init() tea.Cmd {
 
 	// URL が指定されている場合、即時再生を開始する
 	if m.initialURL != "" {
-		url := m.initialURL
+		videoURL := m.initialURL
 		cmds = append(cmds, func() tea.Msg {
 			return ui.PlayVideoMsg{
 				Video: youtube.Video{
-					Title: url,
-					URL:   url,
+					Title: "読み込み中...",
+					URL:   videoURL,
 				},
 			}
 		})
+		// メタデータを非同期で取得して表示を更新
+		cmds = append(cmds, ui.FetchVideoMetadata(m.initialURL))
 	}
 
 	return tea.Batch(cmds...)
@@ -141,9 +147,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Received playback request: start playing, switch to player view, and add to history
 		m.currentView = ViewPlayer
 		m.statusMsg = ""
-		var cmds []tea.Cmd
-		cmds = append(cmds, m.player.PlayVideo(msg.Video))
-		cmds = append(cmds, ui.AddToHistory(m.historyStore, msg.Video))
+		var cmd tea.Cmd
+		m.player, cmd = m.player.PlayVideo(msg.Video)
+		cmds := []tea.Cmd{cmd}
+		// Video.ID がある場合のみ即座に履歴保存（直接 URL 再生時は ID が空なのでスキップ）
+		if msg.Video.ID != "" {
+			cmds = append(cmds, ui.AddToHistory(m.historyStore, msg.Video))
+		}
 		// Fetch related videos async based on the video title
 		cmds = append(cmds, ui.FetchRelatedVideos(msg.Video.Title))
 		return m, tea.Batch(cmds...)
@@ -175,11 +185,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.player, cmd = m.player.Update(msg)
 		return m, cmd
 
+	case ui.VideoMetadataMsg:
+		// Forward video metadata to player model
+		var cmd tea.Cmd
+		m.player, cmd = m.player.Update(msg)
+		cmds := []tea.Cmd{cmd}
+		// メタデータ取得成功時、ID を取得できたら履歴保存と関連動画再取得
+		if msg.Err == nil && msg.Video.ID != "" {
+			cmds = append(cmds, ui.AddToHistory(m.historyStore, msg.Video))
+			cmds = append(cmds, ui.FetchRelatedVideos(msg.Video.Title))
+		}
+		return m, tea.Batch(cmds...)
+
 	case ui.ChatMessageMsg:
 		// Forward chat messages to player model
 		var cmd tea.Cmd
 		m.player, cmd = m.player.Update(msg)
 		return m, cmd
+
+	case ui.HistorySavedMsg:
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("履歴保存エラー: %v", msg.Err)
+		}
+		return m, nil
 
 	case ui.VideoAddedToPlaylistMsg:
 		if msg.Err != nil {

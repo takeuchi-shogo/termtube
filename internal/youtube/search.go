@@ -80,7 +80,7 @@ func extractKeywords(title string) string {
 			return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 				(r >= '0' && r <= '9') || r >= 0x3000) // 日本語文字も含む
 		})
-		if len(cleaned) > 1 || len([]rune(cleaned)) > 0 {
+		if len([]rune(cleaned)) > 0 {
 			keywords = append(keywords, cleaned)
 		}
 		if len(keywords) >= 5 {

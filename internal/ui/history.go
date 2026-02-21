@@ -67,7 +67,11 @@ func (m HistoryModel) Update(msg tea.Msg) (HistoryModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list.SetSize(msg.Width, msg.Height-2)
+		h := msg.Height - 2
+		if h < 1 {
+			h = 1
+		}
+		m.list.SetSize(msg.Width, h)
 		return m, nil
 
 	case HistoryLoadedMsg:
@@ -95,7 +99,7 @@ func (m HistoryModel) Update(msg tea.Msg) (HistoryModel, tea.Cmd) {
 					ID:      hi.entry.VideoID,
 					Title:   hi.entry.Title,
 					Channel: hi.entry.Channel,
-					URL:     fmt.Sprintf("https://www.youtube.com/watch?v=%s", hi.entry.VideoID),
+					URL:     youtube.WatchURL(hi.entry.VideoID),
 				}
 				return m, func() tea.Msg {
 					return PlayVideoMsg{Video: video}
@@ -125,6 +129,11 @@ func (m HistoryModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, m.list.View(), help)
 }
 
+// HistorySavedMsg は履歴保存結果を伝える。
+type HistorySavedMsg struct {
+	Err error
+}
+
 // AddToHistory creates a HistoryEntry from a video and adds it to the store.
 func AddToHistory(store *storage.HistoryStore, video youtube.Video) tea.Cmd {
 	return func() tea.Msg {
@@ -135,7 +144,7 @@ func AddToHistory(store *storage.HistoryStore, video youtube.Video) tea.Cmd {
 			WatchedAt: time.Now(),
 			Duration:  video.Duration,
 		}
-		_ = store.Add(entry) // Ignore error for background save
-		return nil
+		err := store.Add(entry)
+		return HistorySavedMsg{Err: err}
 	}
 }

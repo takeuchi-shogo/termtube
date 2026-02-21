@@ -65,7 +65,7 @@ func SaveConfig(path string, cfg Config) error {
 		return err
 	}
 
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return atomicWriteFile(path, buf.Bytes(), 0o644)
 }
 
 // LoadConfig は TOML ファイルから設定を読み込む。

@@ -24,10 +24,10 @@ func ParseMetadata(data []byte) (Video, error) {
 // GetMetadata runs yt-dlp to retrieve full metadata for a given video URL.
 func GetMetadata(ctx context.Context, videoURL string) (Video, error) {
 	cmd := exec.CommandContext(ctx, "yt-dlp",
-		videoURL,
 		"--dump-json",
 		"--no-download",
 		"--no-warnings",
+		"--", videoURL,
 	)
 
 	output, err := cmd.Output()
@@ -41,10 +41,10 @@ func GetMetadata(ctx context.Context, videoURL string) (Video, error) {
 // GetStreamURL runs yt-dlp to retrieve the direct stream URL for a given video URL.
 func GetStreamURL(ctx context.Context, videoURL string) (string, error) {
 	cmd := exec.CommandContext(ctx, "yt-dlp",
-		videoURL,
 		"--get-url",
 		"--format", "best",
 		"--no-warnings",
+		"--", videoURL,
 	)
 
 	output, err := cmd.Output()

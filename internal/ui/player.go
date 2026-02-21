@@ -57,6 +57,13 @@ type RelatedVideosMsg struct {
 	Err    error
 }
 
+// VideoMetadataMsg carries fetched video metadata for direct URL playback.
+type VideoMetadataMsg struct {
+	Video        youtube.Video
+	RequestedURL string // リクエスト元の URL（順序逆転対策）
+	Err          error
+}
+
 // PlayerModel is a Bubble Tea sub-model that displays current playback info and controls mpv.
 type PlayerModel struct {
 	mpv           *player.MpvPlayer
@@ -111,6 +118,18 @@ func (m PlayerModel) Update(msg tea.Msg) (PlayerModel, tea.Cmd) {
 	case RelatedVideosMsg:
 		if msg.Err == nil {
 			m.relatedVideos = msg.Videos
+		}
+		return m, nil
+
+	case VideoMetadataMsg:
+		// 順序逆転対策: リクエスト元 URL が現在の動画と一致する場合のみ適用
+		if msg.Err == nil && m.current != nil && m.current.URL == msg.RequestedURL {
+			// URL はメタデータの webpage_url で上書きされるため保持
+			currentURL := m.current.URL
+			*m.current = msg.Video
+			if m.current.URL == "" {
+				m.current.URL = currentURL
+			}
 		}
 		return m, nil
 
@@ -390,18 +409,19 @@ func (m PlayerModel) renderRelated() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, relatedBox)
 }
 
-// PlayVideo sets the current video and returns an async command that calls mpv.Play.
-func (m *PlayerModel) PlayVideo(video youtube.Video) tea.Cmd {
+// PlayVideo は動画の再生を開始し、更新された PlayerModel と非同期コマンドを返す。
+// Bubble Tea の値セマンティクスに従い、ポインタレシーバではなく値レシーバで
+// 更新後のモデルを返す。
+func (m PlayerModel) PlayVideo(video youtube.Video) (PlayerModel, tea.Cmd) {
 	m.current = &video
 	m.chat.Clear()
 	m.relatedVideos = nil
 	m.relatedCursor = 0
 	mpv := m.mpv
 	url := video.URL
-	return func() tea.Msg {
+	cmd := func() tea.Msg {
 		err := mpv.Play(url)
 		if err != nil {
-			// Return stopped state on error
 			return PlayerStateMsg{
 				State: player.PlayerState{
 					State: player.StateStopped,
@@ -412,6 +432,7 @@ func (m *PlayerModel) PlayVideo(video youtube.Video) tea.Cmd {
 			State: mpv.GetState(),
 		}
 	}
+	return m, cmd
 }
 
 // FetchRelatedVideos は関連動画を非同期で取得するコマンドを返す。
@@ -422,13 +443,25 @@ func FetchRelatedVideos(videoTitle string) tea.Cmd {
 	}
 }
 
-// formatTime converts seconds to "MM:SS" format.
+// FetchVideoMetadata は URL から動画メタデータを非同期で取得するコマンドを返す。
+func FetchVideoMetadata(videoURL string) tea.Cmd {
+	return func() tea.Msg {
+		video, err := youtube.GetMetadata(context.Background(), videoURL)
+		return VideoMetadataMsg{Video: video, RequestedURL: videoURL, Err: err}
+	}
+}
+
+// formatTime converts seconds to "MM:SS" or "HH:MM:SS" format.
 func formatTime(seconds int) string {
 	if seconds < 0 {
 		seconds = 0
 	}
-	m := seconds / 60
+	h := seconds / 3600
+	m := (seconds % 3600) / 60
 	s := seconds % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
 	return fmt.Sprintf("%02d:%02d", m, s)
 }
 

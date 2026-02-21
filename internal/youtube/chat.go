@@ -31,12 +31,12 @@ func StreamChat(ctx context.Context, videoURL string, ch chan<- ChatMessage) {
 	defer close(ch)
 
 	cmd := exec.CommandContext(ctx, "yt-dlp",
-		videoURL,
 		"--write-sub",
 		"--sub-lang", "live_chat",
 		"--skip-download",
 		"--dump-json",
 		"--no-warnings",
+		"--", videoURL,
 	)
 
 	stdout, err := cmd.StdoutPipe()

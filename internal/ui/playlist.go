@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -107,8 +108,12 @@ func (m PlaylistModel) Update(msg tea.Msg) (PlaylistModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.plList.SetSize(msg.Width, msg.Height-2)
-		m.videoList.SetSize(msg.Width, msg.Height-2)
+		h := msg.Height - 2
+		if h < 1 {
+			h = 1
+		}
+		m.plList.SetSize(msg.Width, h)
+		m.videoList.SetSize(msg.Width, h)
 		return m, nil
 
 	case PlaylistsLoadedMsg:
@@ -176,7 +181,7 @@ func (m PlaylistModel) Update(msg tea.Msg) (PlaylistModel, tea.Cmd) {
 					ID:      vi.video.VideoID,
 					Title:   vi.video.Title,
 					Channel: vi.video.Channel,
-					URL:     fmt.Sprintf("https://www.youtube.com/watch?v=%s", vi.video.VideoID),
+					URL:     youtube.WatchURL(vi.video.VideoID),
 				}
 				return m, func() tea.Msg {
 					return PlayVideoMsg{Video: video}
@@ -258,7 +263,7 @@ func AddVideoToPlaylist(store *storage.PlaylistStore, playlistName string, video
 	return func() tea.Msg {
 		// Try loading; if not found, create
 		_, err := store.Load(playlistName)
-		if err != nil {
+		if errors.Is(err, storage.ErrPlaylistNotFound) {
 			pl := storage.Playlist{
 				Name:   playlistName,
 				Videos: []storage.PlaylistVideo{},
@@ -266,6 +271,8 @@ func AddVideoToPlaylist(store *storage.PlaylistStore, playlistName string, video
 			if saveErr := store.Save(pl); saveErr != nil {
 				return VideoAddedToPlaylistMsg{Err: saveErr}
 			}
+		} else if err != nil {
+			return VideoAddedToPlaylistMsg{Err: err}
 		}
 
 		pv := storage.PlaylistVideo{

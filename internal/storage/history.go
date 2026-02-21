@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,7 @@ type HistoryEntry struct {
 // HistoryStore は視聴履歴の JSON ファイルバックエンドを管理する。
 type HistoryStore struct {
 	path string
+	mu   sync.Mutex
 }
 
 // NewHistoryStore は新しい HistoryStore を作成する。
@@ -32,6 +34,13 @@ func NewHistoryStore(path string) *HistoryStore {
 // Load は履歴ファイルからエントリを読み込む。
 // ファイルが存在しない場合は空スライスを返す。
 func (s *HistoryStore) Load() ([]HistoryEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+// loadLocked は mutex 取得済みの状態で履歴を読み込む。
+func (s *HistoryStore) loadLocked() ([]HistoryEntry, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -51,7 +60,10 @@ func (s *HistoryStore) Load() ([]HistoryEntry, error) {
 // 同じ video_id が既に存在する場合は古いエントリを削除して先頭に新しいエントリを追加する。
 // 最大 100 件まで保持し、超過分は古い順に削除される。
 func (s *HistoryStore) Add(entry HistoryEntry) error {
-	entries, err := s.Load()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := s.loadLocked()
 	if err != nil {
 		return err
 	}
@@ -85,5 +97,5 @@ func (s *HistoryStore) save(entries []HistoryEntry) error {
 		return err
 	}
 
-	return os.WriteFile(s.path, data, 0o644)
+	return atomicWriteFile(s.path, data, 0o644)
 }
