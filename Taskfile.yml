@@ -65,6 +65,38 @@ tasks:
     cmds:
       - './{{.BIN}}'
 
+  "worktree":
+    desc: "並列作業用の git worktree を作成 (例: task worktree -- feat/my-feature)"
+    cmds:
+      - |
+        BRANCH="{{.CLI_ARGS}}"
+        if [ -z "$BRANCH" ]; then
+          echo "❌ ブランチ名を指定してください: task worktree -- feat/my-feature"
+          exit 1
+        fi
+        DIR=".worktrees/$(echo "$BRANCH" | sed 's|/|-|g')"
+        git worktree add "$DIR" -b "$BRANCH" 2>/dev/null || git worktree add "$DIR" "$BRANCH"
+        echo "✅ worktree 作成完了: $DIR (ブランチ: $BRANCH)"
+        echo "   cd $DIR で移動できます"
+
+  "worktree:list":
+    desc: 作成済みの worktree を一覧表示
+    cmds:
+      - git worktree list
+
+  "worktree:remove":
+    desc: "worktree を削除 (例: task worktree:remove -- feat/my-feature)"
+    cmds:
+      - |
+        BRANCH="{{.CLI_ARGS}}"
+        if [ -z "$BRANCH" ]; then
+          echo "❌ ブランチ名を指定してください: task worktree:remove -- feat/my-feature"
+          exit 1
+        fi
+        DIR=".worktrees/$(echo "$BRANCH" | sed 's|/|-|g')"
+        git worktree remove "$DIR"
+        echo "✅ worktree 削除完了: $DIR"
+
   default:
     desc: ヘルプ表示
     cmds:
